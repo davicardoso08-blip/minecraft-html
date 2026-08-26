@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minecraft 2D - Mundo Aberto</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background-color: #111;
+      color: #fff;
+      font-family: 'Courier New', Courier, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    #game-wrapper {
+      position: relative;
+      border: 4px solid #333;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    }
+
+    canvas {
+      display: block;
+      background-color: #70c5ce;
+      image-rendering: pixelated;
+    }
+
+    /* HUD - BARRAS DE VIDA E FOME */
+    #hud {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: rgba(0,0,0,0.5);
+      padding: 8px 12px;
+      border-radius: 6px;
+    }
+
+    .stat-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    .bar-bg {
+      width: 150px;
+      height: 14px;
+      background: #444;
+      border: 2px solid #000;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    #health-bar {
+      width: 100%;
+      height: 100%;
+      background: #ff3333;
+      transition: width 0.2s;
+    }
+
+    #hunger-bar {
+      width: 100%;
+      height: 100%;
+      background: #ff9900;
+      transition: width 0.2s;
+    }
+
+    /* HOTBAR DE BLOCOS */
+    #hotbar {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 4px;
+      background: rgba(0,0,0,0.6);
+      padding: 6px;
+      border: 3px solid #555;
+      border-radius: 6px;
+    }
+
+    .slot {
+      width: 44px;
+      height: 44px;
+      background: #8b8b8b;
+      border: 3px solid #373737;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .slot.active {
+      border-color: #ffffff;
+      box-shadow: 0 0 8px #fff;
+    }
+
+    .slot-icon {
+      width: 28px;
+      height: 28px;
+      border: 1px solid #000;
+    }
+
+    #controls-hint {
+      margin-top: 10px;
+      color: #aaa;
+      font-size: 13px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+  <canvas id="gameCanvas" width="800" height="480"></canvas>
+
+  <div id="hud">
+    <div class="stat-row">
+      <span>VIDA:</span>
+      <div class="bar-bg"><div id="health-bar"></div></div>
+    </div>
+    <div class="stat-row">
+      <span>FOME:</span>
+      <div class="bar-bg"><div id="hunger-bar"></div></div>
+    </div>
+  </div>
+
+  <div id="hotbar">
+    <div class="slot active" onclick="selectSlot(0)">
+      <div class="slot-icon" style="background:#55a02e;"></div>
+    </div>
+    <div class="slot" onclick="selectSlot(1)">
+      <div class="slot-icon" style="background:#866043;"></div>
+    </div>
+    <div class="slot" onclick="selectSlot(2)">
+      <div class="slot-icon" style="background:#737373;"></div>
+    </div>
+    <div class="slot" onclick="selectSlot(3)">
+      <div class="slot-icon" style="background:#6d4c33;"></div>
+    </div>
+    <div class="slot" onclick="selectSlot(4)">
+      <div class="slot-icon" style="background:#388e3c;"></div>
+    </div>
+    <div class="slot" onclick="selectSlot(5)">
+      <div class="slot-icon" style="background:#4dd0e1;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="controls-hint">
+  <b>A / D</b>: Mover | <b>W / Espaço</b>: Pular | <b>Botão Esquerdo</b>: Quebrar / Atacar | <b>Botão Direito</b>: Colocar Bloco | <b>1-6</b>: Selecionar Bloco
+</div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  const TILE_SIZE = 32;
+  const WORLD_WIDTH = 120; // Largura do mundo em blocos
+  const WORLD_HEIGHT = 40; // Altura do mundo em blocos
+
+  // IDs dos blocos
+  const BLOCK = {
+    AIR: 0,
+    GRASS: 1,
+    DIRT: 2,
+    STONE: 3,
+    WOOD: 4,
+    LEAVES: 5,
+    DIAMOND: 6
+  };
+
+  const BLOCK_COLORS = {
+    [BLOCK.GRASS]: '#55a02e',
+    [BLOCK.DIRT]: '#866043',
+    [BLOCK.STONE]: '#737373',
+    [BLOCK.WOOD]: '#6d4c33',
+    [BLOCK.LEAVES]: '#388e3c',
+    [BLOCK.DIAMOND]: '#4dd0e1'
+  };
+
+  const HOTBAR_BLOCKS = [
+    BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.WOOD, BLOCK.LEAVES, BLOCK.DIAMOND
+  ];
+
+  let selectedSlot = 0;
+
+  // Gerar o Mapa Proceduralmente
+  const world = Array.from({ length: WORLD_HEIGHT }, () => new Array(WORLD_WIDTH).fill(BLOCK.AIR));
+
+  function generateTerrain() {
+    let surfaceY = 20;
+    for (let x = 0; x < WORLD_WIDTH; x++) {
+      // Variação do terreno
+      if (Math.random() < 0.4) surfaceY += Math.random() < 0.5 ? 1 : -1;
+      surfaceY = Math.max(12, Math.min(28, surfaceY));
+
+      for (let y = 0; y < WORLD_HEIGHT; y++) {
+        if (y === surfaceY) {
+          world[y][x] = BLOCK.GRASS;
+        } else if (y > surfaceY && y < surfaceY + 4) {
+          world[y][x] = BLOCK.DIRT;
+        } else if (y >= surfaceY + 4) {
+          world[y][x] = Math.random() < 0.05 ? BLOCK.DIAMOND : BLOCK.STONE;
+        }
+      }
+
+      // Gerar Árvores
+      if (x > 5 && x < WORLD_WIDTH - 5 && Math.random() < 0.15) {
+        let trunkHeight = 3 + Math.floor(Math.random() * 2);
+        for (let i = 1; i <= trunkHeight; i++) {
+          if (surfaceY - i >= 0) world[surfaceY - i][x] = BLOCK.WOOD;
+        }
+        let leafTop = surfaceY - trunkHeight - 1;
+        for (let lx = x - 1; lx <= x + 1; lx++) {
+          for (let ly = leafTop - 1; ly <= leafTop; ly++) {
+            if (ly >= 0 && lx >= 0 && lx < WORLD_WIDTH) {
+              if (world[ly][lx] === BLOCK.AIR) world[ly][lx] = BLOCK.LEAVES;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // JOGADOR
+  const player = {
+    x: 10 * TILE_SIZE,
+    y: 10 * TILE_SIZE,
+    vx: 0,
+    vy: 0,
+    width: 20,
+    height: 48,
+    speed: 3.5,
+    jumpPower: -9.5,
+    grounded: false,
+    hp: 100,
+    maxHp: 100,
+    hunger: 100,
+    maxHunger: 100,
+    attackCooldown: 0
+  };
+
+  // INIMIGOS (ZUMBIS)
+  const zombies = [];
+
+  function spawnZombie(x, y) {
+    zombies.push({
+      x: x,
+      y: y,
+      vx: 0,
+      vy: 0,
+      width: 20,
+      height: 48,
+      speed: 1.5,
+      hp: 50,
+      maxHp: 50,
+      grounded: false,
+      hitCooldown: 0
+    });
+  }
+
+  generateTerrain();
+  spawnZombie(25 * TILE_SIZE, 10 * TILE_SIZE);
+  spawnZombie(40 * TILE_SIZE, 10 * TILE_SIZE);
+
+  // CONTROLES
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key >= '1' && e.key <= '6') {
+      selectSlot(parseInt(e.key) - 1);
+    }
+  });
+  window.addEventListener('keyup', e => {
+    keys[e.key.toLowerCase()] = false;
+  });
+
+  function selectSlot(index) {
+    selectedSlot = index;
+    document.querySelectorAll('.slot').forEach((slot, idx) => {
+      slot.classList.toggle('active', idx === index);
+    });
+  }
+
+  // CÂMERA
+  const camera = { x: 0, y: 0 };
+
+  function updateCamera() {
+    camera.x = player.x + player.width / 2 - canvas.width / 2;
+    camera.y = player.y + player.height / 2 - canvas.height / 2;
+
+    camera.x = Math.max(0, Math.min(WORLD_WIDTH * TILE_SIZE - canvas.width, camera.x));
+    camera.y = Math.max(0, Math.min(WORLD_HEIGHT * TILE_SIZE - canvas.height, camera.y));
+  }
+
+  // COLISÃO COM O MAPA
+  function getTileAt(x, y) {
+    let tx = Math.floor(x / TILE_SIZE);
+    let ty = Math.floor(y / TILE_SIZE);
+    if (tx < 0 || tx >= WORLD_WIDTH || ty < 0 || ty >= WORLD_HEIGHT) return BLOCK.STONE;
+    return world[ty][tx];
+  }
+
+  function checkPhysics(entity) {
+    entity.vy += 0.4; // Gravidade
+
+    // Movimento Horizontal
+    entity.x += entity.vx;
+    if (entity.vx > 0) {
+      if (getTileAt(entity.x + entity.width, entity.y) !== BLOCK.AIR || 
+          getTileAt(entity.x + entity.width, entity.y + entity.height - 1) !== BLOCK.AIR) {
+        entity.x = Math.floor((entity.x + entity.width) / TILE_SIZE) * TILE_SIZE - entity.width;
+      }
+    } else if (entity.vx < 0) {
+      if (getTileAt(entity.x, entity.y) !== BLOCK.AIR || 
+          getTileAt(entity.x, entity.y + entity.height - 1) !== BLOCK.AIR) {
+        entity.x = (Math.floor(entity.x / TILE_SIZE) + 1) * TILE_SIZE;
+      }
+    }
+
+    // Movimento Vertical
+    entity.grounded = false;
+    entity.y += entity.vy;
+    if (entity.vy > 0) {
+      if (getTileAt(entity.x, entity.y + entity.height) !== BLOCK.AIR || 
+          getTileAt(entity.x + entity.width - 1, entity.y + entity.height) !== BLOCK.AIR) {
+        entity.y = Math.floor((entity.y + entity.height) / TILE_SIZE) * TILE_SIZE - entity.height;
+        entity.vy = 0;
+        entity.grounded = true;
+      }
+    } else if (entity.vy < 0) {
+      if (getTileAt(entity.x, entity.y) !== BLOCK.AIR || 
+          getTileAt(entity.x + entity.width - 1, entity.y) !== BLOCK.AIR) {
+        entity.y = (Math.floor(entity.y / TILE_SIZE) + 1) * TILE_SIZE;
+        entity.vy = 0;
+      }
+    }
+  }
+
+  // INTERAÇÃO COM O MOUSE (QUEBRAR / CONSTRUIR / ATACAR)
+  canvas.addEventListener('mousedown', e => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left + camera.x;
+    const mouseY = e.clientY - rect.top + camera.y;
+
+    const tileX = Math.floor(mouseX / TILE_SIZE);
+    const tileY = Math.floor(mouseY / TILE_SIZE);
+
+    // Botão Esquerdo: Atacar Inimigo ou Quebrar Bloco
+    if (e.button === 0) {
+      let hitZombie = false;
+      zombies.forEach(z => {
+        if (mouseX >= z.x && mouseX <= z.x + z.width && mouseY >= z.y && mouseY <= z.y + z.height) {
+          z.hp -= 20;
+          z.vx = (z.x > player.x) ? 5 : -5; // Recuo (knockback)
+          z.vy = -3;
+          hitZombie = true;
+        }
+      });
+
+      if (!hitZombie && tileX >= 0 && tileX < WORLD_WIDTH && tileY >= 0 && tileY < WORLD_HEIGHT) {
+        world[tileY][tileX] = BLOCK.AIR;
+      }
+    } 
+    // Botão Direito: Colocar Bloco
+    else if (e.button === 2) {
+      if (tileX >= 0 && tileX < WORLD_WIDTH && tileY >= 0 && tileY < WORLD_HEIGHT) {
+        if (world[tileY][tileX] === BLOCK.AIR) {
+          // Evitar colocar bloco em cima do jogador
+          const pTileX1 = Math.floor(player.x / TILE_SIZE);
+          const pTileX2 = Math.floor((player.x + player.width) / TILE_SIZE);
+          const pTileY1 = Math.floor(player.y / TILE_SIZE);
+          const pTileY2 = Math.floor((player.y + player.height) / TILE_SIZE);
+
+          if (!(tileX >= pTileX1 && tileX <= pTileX2 && tileY >= pTileY1 && tileY <= pTileY2)) {
+            world[tileY][tileX] = HOTBAR_BLOCKS[selectedSlot];
+          }
+        }
+      }
+    }
+  });
+
+  // Desativar menu de contexto do botão direito no canvas
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  // LOOP PRINCIPAL DO JOGO
+  function update() {
+    // Movimento do Jogador
+    player.vx = 0;
+    if (keys['a']) player.vx = -player.speed;
+    if (keys['d']) player.vx = player.speed;
+    if ((keys['w'] || keys[' ']) && player.grounded) {
+      player.vy = player.jumpPower;
+    }
+
+    checkPhysics(player);
+
+    // Fome e Regeneração de Vida
+    player.hunger = Math.max(0, player.hunger - 0.01);
+    if (player.hunger === 0 && player.hp > 0) {
+      player.hp -= 0.05;
+    } else if (player.hunger > 80 && player.hp < player.maxHp) {
+      player.hp = Math.min(player.maxHp, player.hp + 0.03);
+    }
+
+    // Atualizar Zumbis
+    for (let i = zombies.length - 1; i >= 0; i--) {
+      const z = zombies[i];
+      if (z.hp <= 0) {
+        zombies.splice(i, 1);
+        continue;
+      }
+
+      // Inteligência Artificial Simples do Zumbi (Perseguir Jogador)
+      if (z.x < player.x) z.vx = z.speed;
+      else z.vx = -z.speed;
+
+      // Pular obstáculos
+      if (z.grounded && (getTileAt(z.x + (z.vx > 0 ? z.width + 2 : -2), z.y + z.height - 5) !== BLOCK.AIR)) {
+        z.vy = -7;
+      }
+
+      checkPhysics(z);
+
+      // Colisão / Ataque no Jogador
+      if (z.hitCooldown > 0) z.hitCooldown--;
+      if (Math.abs(z.x - player.x) < 20 && Math.abs(z.y - player.y) < 30) {
+        if (z.hitCooldown === 0) {
+          player.hp = Math.max(0, player.hp - 15);
+          player.vx = (player.x > z.x) ? 6 : -6;
+          player.vy = -4;
+          z.hitCooldown = 60; // 1 segundo de cooldown
+        }
+      }
+    }
+
+    // Atualizar Interface (HUD)
+    document.getElementById('health-bar').style.width = `${(player.hp / player.maxHp) * 100}%`;
+    document.getElementById('hunger-bar').style.width = `${(player.hunger / player.maxHunger) * 100}%`;
+
+    updateCamera();
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Renderizar Blocos Visíveis
+    let startCol = Math.floor(camera.x / TILE_SIZE);
+    let endCol = startCol + Math.ceil(canvas.width / TILE_SIZE) + 1;
+    let startRow = Math.floor(camera.y / TILE_SIZE);
+    let endRow = startRow + Math.ceil(canvas.height / TILE_SIZE) + 1;
+
+    for (let r = startRow; r < endRow; r++) {
+      for (let c = startCol; c < endCol; c++) {
+        if (r >= 0 && r < WORLD_HEIGHT && c >= 0 && c < WORLD_WIDTH) {
+          const tile = world[r][c];
+          if (tile !== BLOCK.AIR) {
+            ctx.fillStyle = BLOCK_COLORS[tile];
+            ctx.fillRect(
+              c * TILE_SIZE - camera.x, 
+              r * TILE_SIZE - camera.y, 
+              TILE_SIZE, 
+              TILE_SIZE
+            );
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+            ctx.strokeRect(
+              c * TILE_SIZE - camera.x, 
+              r * TILE_SIZE - camera.y, 
+              TILE_SIZE, 
+              TILE_SIZE
+            );
+          }
+        }
+      }
+    }
+
+    // Renderizar Zumbis
+    zombies.forEach(z => {
+      ctx.fillStyle = '#2e7d32'; // Pele de zumbi
+      ctx.fillRect(z.x - camera.x, z.y - camera.y, z.width, z.height);
+      // Olhos vermelhos
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(z.x - camera.x + 4, z.y - camera.y + 8, 4, 4);
+    });
+
+    // Renderizar Jogador (Steve)
+    ctx.fillStyle = '#0288d1'; // Camisa azul
+    ctx.fillRect(player.x - camera.x, player.y - camera.y, player.width, player.height);
+    ctx.fillStyle = '#ffcc80'; // Cabeça
+    ctx.fillRect(player.x - camera.x, player.y - camera.y, player.width, 16);
+
+    // Tela de Morte
+    if (player.hp <= 0) {
+      ctx.fillStyle = 'rgba(150, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 30px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText('VOCÊ MORREU!', canvas.width / 2, canvas.height / 2);
+    }
+  }
+
+  function gameLoop() {
+    if (player.hp > 0) update();
+    render();
+    requestAnimationFrame(gameLoop);
+  }
+
+  gameLoop();
+</script>
+</body>
+</html>
